@@ -1,0 +1,4 @@
+manim
+requests
+mutagen
+numpy
