@@ -2,3 +2,4 @@ manim
 requests
 mutagen
 numpy
+google-api-python-client
