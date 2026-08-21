@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import glob
+import json
+import logging
+import os
+import random
+import subprocess
+import textwrap
+from dataclasses import dataclass
+from pathlib import Path
+
+import requests
+from manim import *
+from mutagen.mp3 import MP3
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+log = logging.getLogger(__name__)
+
+ROOT = Path(__file__).resolve().parent
+DATA_FILE = ROOT / "quran.json"
+USED_FILE = ROOT / "used_ayahs.json"
+TITLE_FILE = ROOT / "title.txt"
+TEMP_AUDIO = ROOT / "temp_ayah.mp3"
+
+config.frame_width = 9
+config.frame_height = 16
+config.pixel_width = 1080
+config.pixel_height = 1920
+
+FONT = os.environ.get("QURAN_FONT", "Amiri")
+RECITER = os.environ.get("QURAN_RECITER", "ar.husary")
+MAX_DURATION = float(os.environ.get("MAX_DURATION", "25"))
+
+# The renderer intentionally uses several genuinely different compositions.
+STYLES = ["minimal", "cinematic", "mushaf", "night", "golden"]
+
+@dataclass
+class Ayah:
+    surah: int
+    number: int
+    text: str
+    surah_name: str
+
+
+def load_quran():
+    if not DATA_FILE.exists():
+        raise FileNotFoundError(
+            "quran.json غير موجود. شغّل setup_data.py أولاً."
+        )
+    return json.loads(DATA_FILE.read_text(encoding="utf-8"))
+
+
+def used_ayahs() -> set[str]:
+    if not USED_FILE.exists():
+        return set()
+    try:
+        return set(json.loads(USED_FILE.read_text(encoding="utf-8")))
+    except Exception:
+        return set()
+
+
+def save_used(items: set[str]):
+    USED_FILE.write_text(
+        json.dumps(sorted(items), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def choose_ayah() -> Ayah:
+    data = load_quran()
+    used = used_ayahs()
+    candidates: list[Ayah] = []
+
+    for s_idx, surah in enumerate(data["data"]["surahs"], 1):
+        for a_idx, ayah in enumerate(surah["ayahs"], 1):
+            key = f"{s_idx}:{a_idx}"
+            if key not in used:
+                candidates.append(Ayah(s_idx, a_idx, ayah["text"], surah["name"]))
+
+    if not candidates:
+        # Start a new cycle only after every ayah has been used.
+        used.clear()
+        save_used(used)
+        return choose_ayah()
+
+    random.shuffle(candidates)
+    for item in candidates:
+        try:
+            download_audio(item.surah, item.number, TEMP_AUDIO)
+            duration = MP3(TEMP_AUDIO).info.length
+            if duration <= MAX_DURATION:
+                used.add(f"{item.surah}:{item.number}")
+                save_used(used)
+                TEMP_AUDIO.unlink(missing_ok=True)
+                TITLE_FILE.write_text(
+                    f"{item.surah_name} | آية {item.number}", encoding="utf-8"
+                )
+                return item
+            TEMP_AUDIO.unlink(missing_ok=True)
+        except Exception as exc:
+            log.warning("Skipping %s:%s: %s", item.surah, item.number, exc)
+            TEMP_AUDIO.unlink(missing_ok=True)
+    raise RuntimeError("لم يتم العثور على آية مناسبة")
+
+
+def download_audio(surah: int, ayah: int, filename: Path | str) -> Path:
+    api = f"https://api.alquran.cloud/v1/ayah/{surah}:{ayah}/{RECITER}"
+    response = requests.get(api, timeout=30)
+    response.raise_for_status()
+    audio_url = response.json()["data"]["audio"]
+    audio = requests.get(audio_url, timeout=30)
+    audio.raise_for_status()
+    path = Path(filename)
+    path.write_bytes(audio.content)
+    return path
+
+
+def arabic_digits(value: int) -> str:
+    return str(value).translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))
+
+
+def wrap_arabic(text: str, width: int = 32) -> list[str]:
+    return textwrap.wrap(" ".join(text.split()), width=width) or [text]
+
+
+def background(style: str):
+    if style == "night":
+        base = Rectangle(width=9, height=16, fill_color="#030817", fill_opacity=1, stroke_width=0)
+        stars = VGroup(*[
+            Dot([random.uniform(-4.2, 4.2), random.uniform(-7.5, 7.5), 0], radius=random.uniform(.006, .018), color=WHITE)
+            for _ in range(80)
+        ])
+        return VGroup(base, stars)
+    if style == "golden":
+        base = Rectangle(width=9, height=16, fill_color="#120d05", fill_opacity=1, stroke_width=0)
+        glow = Circle(radius=3.5, color=GOLD, stroke_width=0, fill_opacity=.08).move_to([0, 2.2, 0])
+        return VGroup(base, glow)
+    if style == "cinematic":
+        base = Rectangle(width=9, height=16, fill_color="#07100f", fill_opacity=1, stroke_width=0)
+        a = Circle(radius=4.5, color=TEAL, stroke_width=0, fill_opacity=.07).move_to([-2.4, 3.2, 0])
+        b = Circle(radius=3.2, color=BLUE, stroke_width=0, fill_opacity=.06).move_to([2.2, -2.5, 0])
+        return VGroup(base, a, b)
+    if style == "mushaf":
+        base = Rectangle(width=9, height=16, fill_color="#f4efe2", fill_opacity=1, stroke_width=0)
+        border = Rectangle(width=8.2, height=15.2, color=GOLD_E, stroke_width=3, fill_opacity=0)
+        return VGroup(base, border)
+    return Rectangle(width=9, height=16, fill_color="#080b12", fill_opacity=1, stroke_width=0)
+
+
+def make_text(item: Ayah, style: str):
+    color = "#17130b" if style == "mushaf" else WHITE
+    size = {"minimal": 66, "cinematic": 62, "mushaf": 57, "night": 64, "golden": 64}[style]
+    lines = wrap_arabic(item.text, 38 if style == "minimal" else 34)
+    block = VGroup(*[
+        Text(line, font=FONT, font_size=size, color=color)
+        for line in lines
+    ]).arrange(DOWN, buff=.42)
+    return block
+
+
+class QuranScene(Scene):
+    def construct(self):
+        item = choose_ayah()
+        style = os.environ.get("VIDEO_STYLE") or random.choice(STYLES)
+        self.camera.background_color = "#080b12"
+        self.add(background(style))
+
+        title_color = "#6d4c12" if style == "mushaf" else GOLD
+        header = Text(item.surah_name, font=FONT, font_size=42, color=title_color)
+        ref = Text(f"آية {arabic_digits(item.number)}", font=FONT, font_size=26,
+                   color="#5f5a4d" if style == "mushaf" else GRAY_B)
+        heading = VGroup(header, ref).arrange(DOWN, buff=.18).to_edge(UP, buff=.75)
+        self.play(FadeIn(heading, shift=UP * .15), run_time=.55)
+
+        text = make_text(item, style).move_to([0, .1, 0])
+
+        if style == "minimal":
+            self.play(Write(text), run_time=1.3)
+        elif style == "mushaf":
+            panel = Rectangle(width=8.1, height=min(text.height + 1.4, 9.0), color=GOLD_E,
+                              stroke_width=1.5, fill_color="#fffaf0", fill_opacity=.25).move_to(text)
+            self.play(FadeIn(panel), FadeIn(text, scale=.97), run_time=1)
+        elif style == "golden":
+            panel = RoundedRectangle(corner_radius=.35, width=min(text.width + 1.2, 8.3),
+                                     height=min(text.height + 1.2, 9), color=GOLD_E,
+                                     stroke_width=1.5, fill_opacity=.08).move_to(text)
+            self.play(Create(panel), FadeIn(text, scale=.94), run_time=1)
+        else:
+            self.play(FadeIn(text, scale=.92), run_time=.9)
+
+        audio = download_audio(item.surah, item.number, ROOT / f"audio_{item.surah}_{item.number}.mp3")
+        duration = MP3(audio).info.length
+        self.add_sound(str(audio))
+        self.wait(max(duration - 1.0, 1.0))
+        self.play(FadeOut(text), FadeOut(heading), run_time=.65)
+
+
+def render_one(output_path: str):
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["manim", "-qh", str(Path(__file__).resolve()), "QuranScene"],
+        check=True,
+        cwd=ROOT,
+    )
+    videos = glob.glob(str(ROOT / "media/videos/**/*QuranScene.mp4"), recursive=True)
+    if not videos:
+        raise FileNotFoundError("لم يتم العثور على فيديو Manim الناتج")
+    subprocess.run([
+        "ffmpeg", "-y", "-i", videos[-1],
+        "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart",
+        str(output),
+    ], check=True, cwd=ROOT)
+    log.info("Created %s", output)
+
+
+if __name__ == "__main__":
+    render_one("output/Quran_Shorts.mp4")
