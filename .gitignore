@@ -11,4 +11,5 @@ used_ayahs.json
 .env
 client_secret*.json
 token*.json
+token*.pkl
 credentials*.json
