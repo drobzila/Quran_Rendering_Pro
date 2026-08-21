@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+media/
+output/
+batch_output/
+audio_*.mp3
+temp_*.mp3
+title.txt
+quran.json
+used_ayahs.json
+.env
+client_secret*.json
+token*.json
+credentials*.json
