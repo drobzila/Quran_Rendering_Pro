@@ -32,6 +32,13 @@ RECITER = os.environ.get("QURAN_RECITER", "ar.husary")
 MAX_DURATION = float(os.environ.get("MAX_DURATION", "25"))
 STYLES = ["minimal", "cinematic", "mushaf", "night", "golden"]
 
+# Minimal master palette: calm, dark, readable, with restrained gold accents.
+MINIMAL_BG = "#070A0F"
+MINIMAL_PANEL = "#0D1219"
+MINIMAL_GOLD = "#C9A45C"
+MINIMAL_TEXT = "#F5F1E8"
+MINIMAL_MUTED = "#A9A397"
+
 
 @dataclass
 class Ayah:
@@ -134,7 +141,44 @@ def wrap_arabic(text: str, width: int = 32) -> list[str]:
     return textwrap.wrap(" ".join(text.split()), width=width) or [text]
 
 
+def minimal_background():
+    """Premium minimal master inspired by the first approved visual reference."""
+    base = Rectangle(
+        width=9,
+        height=16,
+        fill_color=MINIMAL_BG,
+        fill_opacity=1,
+        stroke_width=0,
+    )
+
+    # Very subtle radial-style light fields; they remain behind the text.
+    top_glow = Circle(
+        radius=4.8,
+        color=MINIMAL_GOLD,
+        stroke_width=0,
+        fill_opacity=0.025,
+    ).move_to([0, 5.7, 0])
+    bottom_glow = Circle(
+        radius=4.0,
+        color="#657080",
+        stroke_width=0,
+        fill_opacity=0.018,
+    ).move_to([0, -5.8, 0])
+
+    # Restrained geometric corner ornaments.
+    ornaments = VGroup()
+    for sx, sy in [(-1, 1), (1, 1), (-1, -1), (1, -1)]:
+        center = np.array([sx * 3.72, sy * 6.75, 0])
+        ring1 = Square(side_length=0.72, color=MINIMAL_GOLD, stroke_width=1.0).rotate(PI / 4).move_to(center)
+        ring2 = Square(side_length=0.38, color=MINIMAL_GOLD, stroke_width=0.7).rotate(PI / 4).move_to(center)
+        ornaments.add(ring1, ring2)
+
+    return VGroup(base, top_glow, bottom_glow, ornaments)
+
+
 def background(style: str):
+    if style == "minimal":
+        return minimal_background()
     if style == "night":
         base = Rectangle(width=9, height=16, fill_color="#030817", fill_opacity=1, stroke_width=0)
         stars = VGroup(*[
@@ -155,33 +199,62 @@ def background(style: str):
         base = Rectangle(width=9, height=16, fill_color="#f4efe2", fill_opacity=1, stroke_width=0)
         border = Rectangle(width=8.2, height=15.2, color=GOLD_E, stroke_width=3, fill_opacity=0)
         return VGroup(base, border)
-    return Rectangle(width=9, height=16, fill_color="#080b12", fill_opacity=1, stroke_width=0)
+    return Rectangle(width=9, height=16, fill_color=MINIMAL_BG, fill_opacity=1, stroke_width=0)
 
 
 def make_text(item: Ayah, style: str):
-    color = "#17130b" if style == "mushaf" else WHITE
-    size = {"minimal": 66, "cinematic": 62, "mushaf": 57, "night": 64, "golden": 64}[style]
-    lines = wrap_arabic(item.text, 38 if style == "minimal" else 34)
-    return VGroup(*[Text(line, font=FONT, font_size=size, color=color) for line in lines]).arrange(DOWN, buff=.42)
+    color = "#17130b" if style == "mushaf" else (MINIMAL_TEXT if style == "minimal" else WHITE)
+    size = {"minimal": 62, "cinematic": 62, "mushaf": 57, "night": 64, "golden": 64}[style]
+    width = 34 if style == "minimal" else (38 if style == "mushaf" else 34)
+    lines = wrap_arabic(item.text, width)
+    return VGroup(
+        *[Text(line, font=FONT, font_size=size, color=color) for line in lines]
+    ).arrange(DOWN, buff=.34)
 
 
 class QuranScene(Scene):
     def construct(self):
         item = select_for_render()
         style = os.environ.get("VIDEO_STYLE") or random.choice(STYLES)
-        self.camera.background_color = "#080b12"
+        self.camera.background_color = MINIMAL_BG
         self.add(background(style))
 
-        title_color = "#6d4c12" if style == "mushaf" else GOLD
-        header = Text(item.surah_name, font=FONT, font_size=42, color=title_color)
-        ref = Text(f"آية {arabic_digits(item.number)}", font=FONT, font_size=26,
-                   color="#5f5a4d" if style == "mushaf" else GRAY_B)
-        heading = VGroup(header, ref).arrange(DOWN, buff=.18).to_edge(UP, buff=.75)
-        self.play(FadeIn(heading, shift=UP * .15), run_time=.55)
-
-        text = make_text(item, style).move_to([0, .1, 0])
         if style == "minimal":
-            self.play(Write(text), run_time=1.3)
+            # Small, quiet header; the verse remains the visual focus.
+            header = Text(item.surah_name, font=FONT, font_size=34, color=MINIMAL_GOLD)
+            ref = Text(
+                f"آية {arabic_digits(item.number)}",
+                font=FONT,
+                font_size=21,
+                color=MINIMAL_MUTED,
+            )
+            divider = Line(LEFT * 0.34, RIGHT * 0.34, color=MINIMAL_GOLD, stroke_width=1.2)
+            heading = VGroup(header, divider, ref).arrange(DOWN, buff=.14).to_edge(UP, buff=.82)
+        else:
+            title_color = "#6d4c12" if style == "mushaf" else GOLD
+            header = Text(item.surah_name, font=FONT, font_size=42, color=title_color)
+            ref = Text(f"آية {arabic_digits(item.number)}", font=FONT, font_size=26,
+                       color="#5f5a4d" if style == "mushaf" else GRAY_B)
+            heading = VGroup(header, ref).arrange(DOWN, buff=.18).to_edge(UP, buff=.75)
+
+        self.play(FadeIn(heading, shift=UP * .10), run_time=.55)
+
+        text = make_text(item, style)
+        if style == "minimal":
+            # A very subtle translucent reading field improves contrast without looking like a card.
+            panel = RoundedRectangle(
+                corner_radius=.22,
+                width=min(text.width + 1.05, 8.25),
+                height=min(text.height + 1.15, 8.9),
+                color="#26303A",
+                stroke_width=0.8,
+                fill_color=MINIMAL_PANEL,
+                fill_opacity=.32,
+            ).move_to([0, .0, 0])
+            accent = Line(LEFT * .25, RIGHT * .25, color=MINIMAL_GOLD, stroke_width=1.1).next_to(panel, DOWN, buff=.28)
+            self.play(FadeIn(panel, scale=.985), run_time=.45)
+            self.play(FadeIn(text, scale=.985), run_time=1.0)
+            self.play(Create(accent), run_time=.25)
         elif style == "mushaf":
             panel = Rectangle(width=8.1, height=min(text.height + 1.4, 9.0), color=GOLD_E,
                               stroke_width=1.5, fill_color="#fffaf0", fill_opacity=.25).move_to(text)
@@ -198,7 +271,13 @@ class QuranScene(Scene):
         duration = MP3(audio).info.length
         self.add_sound(str(audio))
         self.wait(max(duration - 1.0, 1.0))
-        self.play(FadeOut(text), FadeOut(heading), run_time=.65)
+
+        fade_targets = [text, heading]
+        if style == "minimal":
+            fade_targets.extend([panel, accent])
+        elif style in {"mushaf", "golden"}:
+            fade_targets.append(panel)
+        self.play(*[FadeOut(obj) for obj in fade_targets], run_time=.65)
 
 
 def render_one(output_path: str, style: str | None = None) -> tuple[Ayah, str]:
@@ -237,4 +316,4 @@ def render_one(output_path: str, style: str | None = None) -> tuple[Ayah, str]:
 
 
 if __name__ == "__main__":
-    render_one("output/Quran_Shorts.mp4")
+    render_one("output/Quran_Shorts.mp4", style="minimal")
