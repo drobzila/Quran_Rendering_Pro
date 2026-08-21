@@ -20,7 +20,6 @@ log = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent
 DATA_FILE = ROOT / "quran.json"
 USED_FILE = ROOT / "used_ayahs.json"
-TITLE_FILE = ROOT / "title.txt"
 TEMP_AUDIO = ROOT / "temp_ayah.mp3"
 
 config.frame_width = 9
@@ -31,9 +30,8 @@ config.pixel_height = 1920
 FONT = os.environ.get("QURAN_FONT", "Amiri")
 RECITER = os.environ.get("QURAN_RECITER", "ar.husary")
 MAX_DURATION = float(os.environ.get("MAX_DURATION", "25"))
-
-# The renderer intentionally uses several genuinely different compositions.
 STYLES = ["minimal", "cinematic", "mushaf", "night", "golden"]
+
 
 @dataclass
 class Ayah:
@@ -43,11 +41,9 @@ class Ayah:
     surah_name: str
 
 
-def load_quran():
+def load_quran() -> dict:
     if not DATA_FILE.exists():
-        raise FileNotFoundError(
-            "quran.json غير موجود. شغّل setup_data.py أولاً."
-        )
+        raise FileNotFoundError("quran.json غير موجود. شغّل setup_data.py أولاً.")
     return json.loads(DATA_FILE.read_text(encoding="utf-8"))
 
 
@@ -56,52 +52,21 @@ def used_ayahs() -> set[str]:
         return set()
     try:
         return set(json.loads(USED_FILE.read_text(encoding="utf-8")))
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return set()
 
 
-def save_used(items: set[str]):
+def save_used(items: set[str]) -> None:
     USED_FILE.write_text(
-        json.dumps(sorted(items), ensure_ascii=False, indent=2),
-        encoding="utf-8",
+        json.dumps(sorted(items), ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
-def choose_ayah() -> Ayah:
+def find_ayah(surah_number: int, ayah_number: int) -> Ayah:
     data = load_quran()
-    used = used_ayahs()
-    candidates: list[Ayah] = []
-
-    for s_idx, surah in enumerate(data["data"]["surahs"], 1):
-        for a_idx, ayah in enumerate(surah["ayahs"], 1):
-            key = f"{s_idx}:{a_idx}"
-            if key not in used:
-                candidates.append(Ayah(s_idx, a_idx, ayah["text"], surah["name"]))
-
-    if not candidates:
-        # Start a new cycle only after every ayah has been used.
-        used.clear()
-        save_used(used)
-        return choose_ayah()
-
-    random.shuffle(candidates)
-    for item in candidates:
-        try:
-            download_audio(item.surah, item.number, TEMP_AUDIO)
-            duration = MP3(TEMP_AUDIO).info.length
-            if duration <= MAX_DURATION:
-                used.add(f"{item.surah}:{item.number}")
-                save_used(used)
-                TEMP_AUDIO.unlink(missing_ok=True)
-                TITLE_FILE.write_text(
-                    f"{item.surah_name} | آية {item.number}", encoding="utf-8"
-                )
-                return item
-            TEMP_AUDIO.unlink(missing_ok=True)
-        except Exception as exc:
-            log.warning("Skipping %s:%s: %s", item.surah, item.number, exc)
-            TEMP_AUDIO.unlink(missing_ok=True)
-    raise RuntimeError("لم يتم العثور على آية مناسبة")
+    surah = data["data"]["surahs"][surah_number - 1]
+    ayah = surah["ayahs"][ayah_number - 1]
+    return Ayah(surah_number, ayah_number, ayah["text"], surah["name"])
 
 
 def download_audio(surah: int, ayah: int, filename: Path | str) -> Path:
@@ -112,8 +77,53 @@ def download_audio(surah: int, ayah: int, filename: Path | str) -> Path:
     audio = requests.get(audio_url, timeout=30)
     audio.raise_for_status()
     path = Path(filename)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(audio.content)
     return path
+
+
+def choose_ayah() -> Ayah:
+    data = load_quran()
+    used = used_ayahs()
+    candidates: list[Ayah] = []
+
+    for s_idx, surah in enumerate(data["data"]["surahs"], 1):
+        for a_idx, ayah in enumerate(surah["ayahs"], 1):
+            if f"{s_idx}:{a_idx}" not in used:
+                candidates.append(Ayah(s_idx, a_idx, ayah["text"], surah["name"]))
+
+    if not candidates:
+        used.clear()
+        save_used(used)
+        return choose_ayah()
+
+    random.shuffle(candidates)
+    for item in candidates:
+        try:
+            download_audio(item.surah, item.number, TEMP_AUDIO)
+            duration = MP3(TEMP_AUDIO).info.length
+            TEMP_AUDIO.unlink(missing_ok=True)
+            if duration <= MAX_DURATION:
+                return item
+        except Exception as exc:
+            log.warning("Skipping %s:%s: %s", item.surah, item.number, exc)
+            TEMP_AUDIO.unlink(missing_ok=True)
+
+    raise RuntimeError("لم يتم العثور على آية مناسبة ضمن الحد الزمني")
+
+
+def select_for_render() -> Ayah:
+    env_surah = os.environ.get("QURAN_SURAH")
+    env_ayah = os.environ.get("QURAN_AYAH")
+    if env_surah and env_ayah:
+        return find_ayah(int(env_surah), int(env_ayah))
+    return choose_ayah()
+
+
+def mark_used(item: Ayah) -> None:
+    used = used_ayahs()
+    used.add(f"{item.surah}:{item.number}")
+    save_used(used)
 
 
 def arabic_digits(value: int) -> str:
@@ -152,16 +162,12 @@ def make_text(item: Ayah, style: str):
     color = "#17130b" if style == "mushaf" else WHITE
     size = {"minimal": 66, "cinematic": 62, "mushaf": 57, "night": 64, "golden": 64}[style]
     lines = wrap_arabic(item.text, 38 if style == "minimal" else 34)
-    block = VGroup(*[
-        Text(line, font=FONT, font_size=size, color=color)
-        for line in lines
-    ]).arrange(DOWN, buff=.42)
-    return block
+    return VGroup(*[Text(line, font=FONT, font_size=size, color=color) for line in lines]).arrange(DOWN, buff=.42)
 
 
 class QuranScene(Scene):
     def construct(self):
-        item = choose_ayah()
+        item = select_for_render()
         style = os.environ.get("VIDEO_STYLE") or random.choice(STYLES)
         self.camera.background_color = "#080b12"
         self.add(background(style))
@@ -174,7 +180,6 @@ class QuranScene(Scene):
         self.play(FadeIn(heading, shift=UP * .15), run_time=.55)
 
         text = make_text(item, style).move_to([0, .1, 0])
-
         if style == "minimal":
             self.play(Write(text), run_time=1.3)
         elif style == "mushaf":
@@ -196,24 +201,39 @@ class QuranScene(Scene):
         self.play(FadeOut(text), FadeOut(heading), run_time=.65)
 
 
-def render_one(output_path: str):
+def render_one(output_path: str, style: str | None = None) -> tuple[Ayah, str]:
+    item = choose_ayah()
+    selected_style = style or random.choice(STYLES)
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["QURAN_SURAH"] = str(item.surah)
+    env["QURAN_AYAH"] = str(item.number)
+    env["VIDEO_STYLE"] = selected_style
+
     subprocess.run(
         ["manim", "-qh", str(Path(__file__).resolve()), "QuranScene"],
         check=True,
         cwd=ROOT,
+        env=env,
     )
+
     videos = glob.glob(str(ROOT / "media/videos/**/*QuranScene.mp4"), recursive=True)
     if not videos:
         raise FileNotFoundError("لم يتم العثور على فيديو Manim الناتج")
+    source = max(videos, key=lambda p: Path(p).stat().st_mtime)
+
     subprocess.run([
-        "ffmpeg", "-y", "-i", videos[-1],
+        "ffmpeg", "-y", "-i", source,
         "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart",
         str(output),
     ], check=True, cwd=ROOT)
-    log.info("Created %s", output)
+
+    mark_used(item)
+    log.info("Created %s — %s:%s — %s", output, item.surah, item.number, selected_style)
+    return item, selected_style
 
 
 if __name__ == "__main__":
