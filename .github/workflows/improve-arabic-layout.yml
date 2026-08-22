@@ -1,0 +1,107 @@
+name: Improve Arabic Layout
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-layout:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Patch Quran layout
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('Quran.py')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''def wrap_arabic(text: str, width: int = 29) -> list[str]:
+              # Preserve Quran glyphs and diacritics; only normalize whitespace.
+              clean = " ".join(text.split())
+              return textwrap.wrap(clean, width=width, break_long_words=False, break_on_hyphens=False) or [clean]
+          '''
+
+          new = '''def wrap_arabic(text: str, width: int = 29) -> list[str]:
+              """Wrap Arabic by rendered width, keeping complete words together.
+
+              textwrap counts characters, which is a poor fit for Arabic/Quranic
+              glyphs because connected letters and tashkeel have very different
+              visual widths.  We therefore measure each candidate line with the
+              actual Manim Text object and choose the fullest line that fits.
+              """
+              clean = " ".join(text.split())
+              words = clean.split()
+              if not words:
+                  return [clean]
+
+              # The caller supplies a character-width hint; for Minimal this
+              # maps to a generous visual width at the final 1080x1920 size.
+              max_width = 7.15 if width <= 29 else 7.35
+              font_size = 56
+              lines = []
+              current = []
+
+              def fits(candidate: str) -> bool:
+                  probe = Text(candidate, font=FONT, font_size=font_size)
+                  return probe.width <= max_width
+
+              for word in words:
+                  candidate = word if not current else " ".join(current + [word])
+                  if current and not fits(candidate):
+                      lines.append(" ".join(current))
+                      current = [word]
+                  else:
+                      current.append(word)
+
+              if current:
+                  lines.append(" ".join(current))
+
+              # Avoid a lonely final word where possible by moving the previous
+              # word down from the preceding line.
+              if len(lines) >= 2 and len(lines[-1].split()) == 1:
+                  previous = lines[-2].split()
+                  if len(previous) >= 2:
+                      moved = previous.pop()
+                      candidate = moved + " " + lines[-1]
+                      if fits(candidate):
+                          lines[-2] = " ".join(previous)
+                          lines[-1] = candidate
+
+              return lines
+          '''
+
+          if old in text:
+              text = text.replace(old, new)
+          elif 'Wrap Arabic by rendered width' not in text:
+              raise SystemExit('Expected wrap_arabic block was not found')
+
+          text = text.replace(
+              'width = 29 if style == "minimal" else (32 if style == "mushaf" else 30)',
+              'width = 28 if style == "minimal" else (31 if style == "mushaf" else 29)',
+          )
+          text = text.replace(
+              ').arrange(DOWN, buff=.42)\n    text_group.set_max_width(7.45)',
+              ').arrange(DOWN, buff=.30)\n    text_group.set_max_width(7.45)',
+          )
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit layout improvement
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Quran.py
+          git diff --cached --quiet && exit 0
+          git commit -m "Improve Arabic verse line wrapping [skip ci]"
+          git push
