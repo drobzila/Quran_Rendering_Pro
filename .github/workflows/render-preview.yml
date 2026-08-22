@@ -39,10 +39,14 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config python3-dev
+          pkg-config --modversion pangocairo
+
+      - name: Upgrade build tools
+        run: python -m pip install --upgrade pip setuptools wheel
 
       - name: Install Python dependencies
-        run: pip install -r requirements.txt
+        run: pip install --prefer-binary -r requirements.txt
 
       - name: Download Quran data
         run: python setup_data.py
