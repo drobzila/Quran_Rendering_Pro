@@ -39,8 +39,16 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config python3-dev
+          sudo apt-get install -y ffmpeg libcairo2-dev libpango1.0-dev pkg-config python3-dev fontconfig
           pkg-config --modversion pangocairo
+
+      - name: Install Amiri Quran font
+        run: |
+          mkdir -p "$HOME/.local/share/fonts"
+          curl -L --fail --retry 3 -o "$HOME/.local/share/fonts/AmiriQuran-Regular.ttf" \
+            https://raw.githubusercontent.com/google/fonts/main/ofl/amiriquran/AmiriQuran-Regular.ttf
+          fc-cache -f -v
+          fc-list | grep -i "Amiri Quran" | head -5
 
       - name: Upgrade build tools
         run: python -m pip install --upgrade pip setuptools wheel
