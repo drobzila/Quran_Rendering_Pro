@@ -1,0 +1,63 @@
+name: Render Quran Preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      surah:
+        description: 'Surah number (optional)'
+        required: false
+        default: ''
+      ayah:
+        description: 'Ayah number (optional)'
+        required: false
+        default: ''
+      style:
+        description: 'Visual style'
+        required: true
+        default: 'minimal'
+        type: choice
+        options:
+          - minimal
+          - cinematic
+          - mushaf
+          - night
+          - golden
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download Quran data
+        run: python setup_data.py
+
+      - name: Render preview
+        env:
+          VIDEO_STYLE: ${{ inputs.style }}
+          QURAN_SURAH: ${{ inputs.surah }}
+          QURAN_AYAH: ${{ inputs.ayah }}
+        run: python Quran.py
+
+      - name: Upload preview video
+        uses: actions/upload-artifact@v4
+        with:
+          name: quran-preview-${{ inputs.style }}
+          path: output/Quran_Shorts.mp4
+          if-no-files-found: error
+          retention-days: 7
