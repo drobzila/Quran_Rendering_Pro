@@ -27,12 +27,13 @@ config.frame_height = 16
 config.pixel_width = 1080
 config.pixel_height = 1920
 
-FONT = os.environ.get("QURAN_FONT", "Amiri")
+# Amiri Quran is installed by the GitHub Actions workflow. Keep Amiri as a
+# local fallback for machines where the Quran font is not installed.
+FONT = os.environ.get("QURAN_FONT", "Amiri Quran")
 RECITER = os.environ.get("QURAN_RECITER", "ar.husary")
 MAX_DURATION = float(os.environ.get("MAX_DURATION", "25"))
 STYLES = ["minimal", "cinematic", "mushaf", "night", "golden"]
 
-# Minimal master palette: calm, dark, readable, with restrained gold accents.
 MINIMAL_BG = "#070A0F"
 MINIMAL_PANEL = "#0D1219"
 MINIMAL_GOLD = "#C9A45C"
@@ -137,12 +138,13 @@ def arabic_digits(value: int) -> str:
     return str(value).translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))
 
 
-def wrap_arabic(text: str, width: int = 32) -> list[str]:
-    return textwrap.wrap(" ".join(text.split()), width=width) or [text]
+def wrap_arabic(text: str, width: int = 29) -> list[str]:
+    # Preserve Quran glyphs and diacritics; only normalize whitespace.
+    clean = " ".join(text.split())
+    return textwrap.wrap(clean, width=width, break_long_words=False, break_on_hyphens=False) or [clean]
 
 
 def minimal_background():
-    """Premium minimal master inspired by the first approved visual reference."""
     base = Rectangle(
         width=9,
         height=16,
@@ -151,7 +153,6 @@ def minimal_background():
         stroke_width=0,
     )
 
-    # Very subtle radial-style light fields; they remain behind the text.
     top_glow = Circle(
         radius=4.8,
         color=MINIMAL_GOLD,
@@ -165,7 +166,6 @@ def minimal_background():
         fill_opacity=0.018,
     ).move_to([0, -5.8, 0])
 
-    # Restrained geometric corner ornaments.
     ornaments = VGroup()
     for sx, sy in [(-1, 1), (1, 1), (-1, -1), (1, -1)]:
         center = np.array([sx * 3.72, sy * 6.75, 0])
@@ -204,12 +204,16 @@ def background(style: str):
 
 def make_text(item: Ayah, style: str):
     color = "#17130b" if style == "mushaf" else (MINIMAL_TEXT if style == "minimal" else WHITE)
-    size = {"minimal": 62, "cinematic": 62, "mushaf": 57, "night": 64, "golden": 64}[style]
-    width = 34 if style == "minimal" else (38 if style == "mushaf" else 34)
+    # Amiri Quran has a more delicate Quranic rhythm; use a slightly smaller
+    # size and wider line spacing to keep tashkeel clear at 1080x1920.
+    size = {"minimal": 56, "cinematic": 58, "mushaf": 54, "night": 59, "golden": 59}[style]
+    width = 29 if style == "minimal" else (32 if style == "mushaf" else 30)
     lines = wrap_arabic(item.text, width)
-    return VGroup(
+    text_group = VGroup(
         *[Text(line, font=FONT, font_size=size, color=color) for line in lines]
-    ).arrange(DOWN, buff=.34)
+    ).arrange(DOWN, buff=.42)
+    text_group.set_max_width(7.45)
+    return text_group
 
 
 class QuranScene(Scene):
@@ -220,41 +224,39 @@ class QuranScene(Scene):
         self.add(background(style))
 
         if style == "minimal":
-            # Small, quiet header; the verse remains the visual focus.
-            header = Text(item.surah_name, font=FONT, font_size=34, color=MINIMAL_GOLD)
+            header = Text(item.surah_name, font=FONT, font_size=31, color=MINIMAL_GOLD)
             ref = Text(
-                f"آية {arabic_digits(item.number)}",
+                f"الآية {arabic_digits(item.number)}",
                 font=FONT,
-                font_size=21,
+                font_size=19,
                 color=MINIMAL_MUTED,
             )
-            divider = Line(LEFT * 0.34, RIGHT * 0.34, color=MINIMAL_GOLD, stroke_width=1.2)
-            heading = VGroup(header, divider, ref).arrange(DOWN, buff=.14).to_edge(UP, buff=.82)
+            divider = Line(LEFT * 0.32, RIGHT * 0.32, color=MINIMAL_GOLD, stroke_width=1.1)
+            heading = VGroup(header, divider, ref).arrange(DOWN, buff=.12).to_edge(UP, buff=.78)
         else:
             title_color = "#6d4c12" if style == "mushaf" else GOLD
-            header = Text(item.surah_name, font=FONT, font_size=42, color=title_color)
-            ref = Text(f"آية {arabic_digits(item.number)}", font=FONT, font_size=26,
+            header = Text(item.surah_name, font=FONT, font_size=39, color=title_color)
+            ref = Text(f"الآية {arabic_digits(item.number)}", font=FONT, font_size=23,
                        color="#5f5a4d" if style == "mushaf" else GRAY_B)
-            heading = VGroup(header, ref).arrange(DOWN, buff=.18).to_edge(UP, buff=.75)
+            heading = VGroup(header, ref).arrange(DOWN, buff=.16).to_edge(UP, buff=.75)
 
-        self.play(FadeIn(heading, shift=UP * .10), run_time=.55)
+        self.play(FadeIn(heading, shift=UP * .08), run_time=.5)
 
         text = make_text(item, style)
         if style == "minimal":
-            # A very subtle translucent reading field improves contrast without looking like a card.
             panel = RoundedRectangle(
                 corner_radius=.22,
-                width=min(text.width + 1.05, 8.25),
-                height=min(text.height + 1.15, 8.9),
+                width=min(text.width + 1.0, 8.15),
+                height=min(text.height + 1.05, 8.7),
                 color="#26303A",
                 stroke_width=0.8,
                 fill_color=MINIMAL_PANEL,
-                fill_opacity=.32,
-            ).move_to([0, .0, 0])
-            accent = Line(LEFT * .25, RIGHT * .25, color=MINIMAL_GOLD, stroke_width=1.1).next_to(panel, DOWN, buff=.28)
-            self.play(FadeIn(panel, scale=.985), run_time=.45)
-            self.play(FadeIn(text, scale=.985), run_time=1.0)
-            self.play(Create(accent), run_time=.25)
+                fill_opacity=.30,
+            ).move_to([0, -.05, 0])
+            accent = Line(LEFT * .23, RIGHT * .23, color=MINIMAL_GOLD, stroke_width=1.0).next_to(panel, DOWN, buff=.25)
+            self.play(FadeIn(panel, scale=.985), run_time=.4)
+            self.play(FadeIn(text, scale=.985), run_time=.95)
+            self.play(Create(accent), run_time=.2)
         elif style == "mushaf":
             panel = Rectangle(width=8.1, height=min(text.height + 1.4, 9.0), color=GOLD_E,
                               stroke_width=1.5, fill_color="#fffaf0", fill_opacity=.25).move_to(text)
