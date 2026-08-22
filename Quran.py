@@ -139,9 +139,52 @@ def arabic_digits(value: int) -> str:
 
 
 def wrap_arabic(text: str, width: int = 29) -> list[str]:
-    # Preserve Quran glyphs and diacritics; only normalize whitespace.
+    """Wrap Arabic by rendered width, keeping complete words together.
+
+    textwrap counts characters, which is a poor fit for Arabic/Quranic
+    glyphs because connected letters and tashkeel have very different
+    visual widths.  We therefore measure each candidate line with the
+    actual Manim Text object and choose the fullest line that fits.
+    """
     clean = " ".join(text.split())
-    return textwrap.wrap(clean, width=width, break_long_words=False, break_on_hyphens=False) or [clean]
+    words = clean.split()
+    if not words:
+        return [clean]
+
+    # The caller supplies a character-width hint; for Minimal this
+    # maps to a generous visual width at the final 1080x1920 size.
+    max_width = 7.15 if width <= 29 else 7.35
+    font_size = 56
+    lines = []
+    current = []
+
+    def fits(candidate: str) -> bool:
+        probe = Text(candidate, font=FONT, font_size=font_size)
+        return probe.width <= max_width
+
+    for word in words:
+        candidate = word if not current else " ".join(current + [word])
+        if current and not fits(candidate):
+            lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+
+    if current:
+        lines.append(" ".join(current))
+
+    # Avoid a lonely final word where possible by moving the previous
+    # word down from the preceding line.
+    if len(lines) >= 2 and len(lines[-1].split()) == 1:
+        previous = lines[-2].split()
+        if len(previous) >= 2:
+            moved = previous.pop()
+            candidate = moved + " " + lines[-1]
+            if fits(candidate):
+                lines[-2] = " ".join(previous)
+                lines[-1] = candidate
+
+    return lines
 
 
 def minimal_background():
@@ -207,11 +250,11 @@ def make_text(item: Ayah, style: str):
     # Amiri Quran has a more delicate Quranic rhythm; use a slightly smaller
     # size and wider line spacing to keep tashkeel clear at 1080x1920.
     size = {"minimal": 56, "cinematic": 58, "mushaf": 54, "night": 59, "golden": 59}[style]
-    width = 29 if style == "minimal" else (32 if style == "mushaf" else 30)
+    width = 28 if style == "minimal" else (31 if style == "mushaf" else 29)
     lines = wrap_arabic(item.text, width)
     text_group = VGroup(
         *[Text(line, font=FONT, font_size=size, color=color) for line in lines]
-    ).arrange(DOWN, buff=.42)
+    ).arrange(DOWN, buff=.30)
     text_group.set_max_width(7.45)
     return text_group
 
